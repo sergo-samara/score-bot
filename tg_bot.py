@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-24SCORE.PRO — TELEGRAM-БОТ ДЛЯ ФУТБОЛЬНЫХ СИГНАЛОВ
-Готов к работе на Render.com (Free Web Service)
+24SCORE.PRO — TELEGRAM-БОТ (CRASAVA)
+С поддержкой HEAD и GET запросов для UptimeRobot и Render.com
 """
 
 import sys
@@ -17,6 +17,12 @@ import concurrent.futures
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timezone, timedelta
 from bs4 import BeautifulSoup
+
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:
+    pass
 
 # ==================== НАСТРОЙКИ БОТА ====================
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "6799385620:AAEjPUtNMDORMSbW4uEaR0TNaDDrS8PMroc")
@@ -33,8 +39,26 @@ HEADERS = {
 }
 
 DOMAINS = ['https://24score.pro', 'https://en.24score.com']
+SUBSCRIBERS_FILE = "subscribers.json"
 
-subscribers = set()
+def load_subscribers():
+    if os.path.exists(SUBSCRIBERS_FILE):
+        try:
+            with open(SUBSCRIBERS_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return set(data)
+        except Exception:
+            return set()
+    return set()
+
+def save_subscribers(subs):
+    try:
+        with open(SUBSCRIBERS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(list(subs), f)
+    except Exception:
+        pass
+
+subscribers = load_subscribers()
 alerted_matches = set()
 cached_matches = []
 cache_time = 0
@@ -183,7 +207,7 @@ def tg_request(method, data=None):
             req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), headers={'Content-Type': 'application/json'})
         else:
             req = urllib.request.Request(url)
-        with urllib.request.urlopen(req, timeout=25) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read().decode('utf-8'))
     except Exception:
         return None
@@ -228,7 +252,7 @@ def format_card(m, is_alert=False):
     )
 
 def background_monitor():
-    print("[*] Фоновый монитор сигналов (за 30 мин) запущен...")
+    print("[*] Фоновый монитор сигналов (за 30 мин) запущен...", flush=True)
     while True:
         try:
             token = os.environ.get("BOT_TOKEN", BOT_TOKEN)
@@ -241,16 +265,17 @@ def background_monitor():
                         if key not in alerted_matches:
                             alerted_matches.add(key)
                             text = f"🚨🚨🚨 <b>СИГНАЛ ЗА {mins} МИНУТ ДО МАТЧА!</b> 🚨🚨🚨\n\n{format_card(m, True)}"
+                            print(f"[!] СИГНАЛ: {m['team1']} vs {m['team2']}", flush=True)
                             for uid in list(subscribers):
                                 send_message(uid, text, get_main_keyboard())
         except Exception as e:
-            print(f"Ошибка монитора: {e}")
+            print(f"Ошибка монитора: {e}", flush=True)
         time.sleep(CHECK_INTERVAL_SEC)
 
 def start_bot():
     global subscribers
     offset = 0
-    print("[*] Бот успешно запущен и слушает Telegram...")
+    print("[*] Бот успешно запущен и слушает Telegram...", flush=True)
     while True:
         try:
             res = tg_request('getUpdates', {'offset': offset, 'timeout': 20})
@@ -261,11 +286,14 @@ def start_bot():
                     if not msg or 'text' not in msg: continue
                     chat_id = msg['chat']['id']
                     text = msg['text'].strip()
-                    subscribers.add(chat_id)
+                    
+                    if chat_id not in subscribers:
+                        subscribers.add(chat_id)
+                        save_subscribers(subscribers)
 
                     if text == '/start':
                         welcome = (
-                            f"👋 <b>Добро пожаловать в 24score Alert Bot!</b>\n\n"
+                            f"👋 <b>Бот CRASAVA работает!</b>\n\n"
                             f"Критерии отбора:\n"
                             f"1. Ничья (Х) &ge; {MIN_DRAW_ODDS}\n"
                             f"2. 1-й тайм (ТБ 0.5 за 20 матчей) &ge; {MIN_1ST_HALF_OVER05} у любой команды\n"
@@ -297,30 +325,31 @@ def start_bot():
                                 time.sleep(0.3)
                     elif 'Мои критерии' in text:
                         send_message(chat_id, f"⚙️ Критерии: X &ge; {MIN_DRAW_ODDS}, 1-й тайм >0.5 &ge; {MIN_1ST_HALF_OVER05}/20. Сигнал за 30 мин.", get_main_keyboard())
-        except Exception:
+            else:
+                time.sleep(2)
+        except Exception as e:
+            print(f"Ошибка polling: {e}", flush=True)
             time.sleep(3)
 
-# HTTP сервер для прохождения проверки портов Render.com
+# HTTP сервер для Render и UptimeRobot (отвечает на GET и HEAD запросы кодом 200)
 class RenderHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
+    def do_HEAD(self):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain; charset=utf-8')
         self.end_headers()
-        self.wfile.write(b"24Score Telegram Bot is LIVE and RUNNING!")
+
+    def do_GET(self):
+        self.do_HEAD()
+        self.wfile.write(b"24Score Telegram Bot is LIVE 24/7!")
+
     def log_message(self, format, *args):
         pass
 
 if __name__ == '__main__':
-    # 1. СРАЗУ открываем порт 10000 для Render.com
     port = int(os.environ.get("PORT", 10000))
     server = HTTPServer(('0.0.0.0', port), RenderHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    print(f"===> Port {port} opened successfully for Render!")
+    print(f"===> Port {port} opened successfully for Render!", flush=True)
 
-    # 2. Запускаем фоновый мониторинг сигналов за 30 мин
     threading.Thread(target=background_monitor, daemon=True).start()
-
-    # 3. Запускаем Telegram бота
     start_bot()
-
-
